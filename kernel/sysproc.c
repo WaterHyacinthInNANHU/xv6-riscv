@@ -89,3 +89,48 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_sysinfo(void) {
+  int param;
+  // if (argint(0, &param) < 0)
+  //   return -1;
+  argint(0, &param);
+
+  if (param == 0) {
+    // Count active processes
+    return count_active_procs(); // You will implement this
+  } else if (param == 1) {
+    return total_syscalls - 1; // You will implement this
+  } else if (param == 2) {
+    return count_free_pages();   // You will implement this
+  } else {
+    return -1;
+  }
+  return 0;
+}
+
+uint64
+sys_procinfo(void)
+{
+  struct pinfo info;
+  struct proc *p = myproc();
+  uint64 uaddr;
+
+  // Get user pointer to struct
+  // if (argaddr(0, &uaddr) < 0 || uaddr == 0)
+  //   return -1;
+  argaddr(0, &uaddr);
+  if (uaddr == 0)
+    return -1;
+
+  info.ppid = p->parent ? p->parent->pid : -1;
+  info.syscall_count = p->syscall_count - 1;
+  info.page_usage = (p->sz + PGSIZE - 1) / PGSIZE; // round-up division
+
+  // copy back to user space
+  if (copyout(p->pagetable, uaddr, (char *)&info, sizeof(info)) < 0)
+    return -1;
+
+  return 0;
+}
