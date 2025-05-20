@@ -125,6 +125,12 @@ found:
   p->pid = allocpid();
   p->state = USED;
 
+  p->tickets = 10000;   // default
+  p->ticks_run = 0;
+
+  p->stride = 10000 / p->tickets;  // K = 10000
+  p->pass = 0;
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -434,6 +440,15 @@ wait(uint64 addr)
   }
 }
 
+
+// pseudo random generator (LFSR)
+unsigned short lfsr = 0xACE1u; 
+unsigned short bit; 
+unsigned short rand() 
+{ 
+bit = ((lfsr >> 0) ^ (lfsr >> 2) ^ (lfsr >> 3) ^ (lfsr >> 5)) & 1; 
+return lfsr = (lfsr >> 1) | (bit << 15); 
+} 
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -446,11 +461,83 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-  
   c->proc = 0;
+  // lfsr = (unsigned short)(mycpu()->noff + ticks);
+  // lfsr = (unsigned short)(r_time() & 0xFFFF);
+  // printf("Scheduler started on CPU %d\n", cpuid());
+
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
+  
+  #if defined(LOTTERY)
+
+      int total_tickets = 0;
+      // Step 1: calculate total tickets
+      for(p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        if (p->state == RUNNABLE) {
+          total_tickets += p->tickets;
+        }
+        release(&p->lock);
+      }
+
+      // Step 2: draw a winning ticket
+      int winner = rand() % total_tickets;
+
+      // Step 3: pick the process that wins
+      int count = 0;
+      for(p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        if (p->state == RUNNABLE) {
+          count += p->tickets;
+          if (count > winner) {
+            // Switch to the winning process
+            p->ticks_run++;  // record usage
+            p->state = RUNNING;
+            c->proc = p;
+            swtch(&c->context, &p->context);
+            c->proc = 0;
+            release(&p->lock);
+            break;
+          }
+        }
+        release(&p->lock);
+      }
+  #elif defined(STRIDE)
+  struct proc *minproc = 0;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->state == RUNNABLE) {
+      if (minproc == 0 || p->pass < minproc->pass) {
+        if (minproc)
+          release(&minproc->lock);
+        minproc = p;
+      } else {
+        release(&p->lock);
+      }
+    } else {
+      release(&p->lock);
+    }
+  }
+
+  if (minproc != 0) {
+    // Run the selected process
+    minproc->ticks_run++;
+    minproc->state = RUNNING;
+    c->proc = minproc;
+
+    swtch(&c->context, &minproc->context);
+
+    c->proc = 0;
+
+    // Update pass value
+    minproc->pass += minproc->stride;
+
+    release(&minproc->lock);
+  }
+  #else
 
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
@@ -460,6 +547,7 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        p->ticks_run++;
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
@@ -468,6 +556,7 @@ scheduler(void)
       }
       release(&p->lock);
     }
+    #endif
   }
 }
 

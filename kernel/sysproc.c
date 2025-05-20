@@ -6,6 +6,8 @@
 #include "spinlock.h"
 #include "proc.h"
 
+extern struct proc proc[NPROC];
+
 uint64
 sys_exit(void)
 {
@@ -88,4 +90,31 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64
+sys_sched_tickets(void)
+{
+  int n;
+  argint(0, &n);  // assume it always succeeds
+  if (n <= 0 || n > 10000)
+    return -1;
+  myproc()->tickets = n;
+  myproc()->stride = 10000 / n;
+  return 0;
+}
+
+uint64
+sys_sched_statistics(void)
+{
+  struct proc *p;
+  printf("PID(Name): tickets, ticks\n");
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->state != UNUSED) {
+      printf("%d(%s): tickets: %d, ticks: %d\n", p->pid, p->name, p->tickets, p->ticks_run);
+    }
+    release(&p->lock);
+  }
+  return 0;
 }
