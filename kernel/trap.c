@@ -127,6 +127,15 @@ usertrapret(void)
   // and switches to user mode with sret.
   uint64 trampoline_userret = TRAMPOLINE + (userret - trampoline);
   ((void (*)(uint64))trampoline_userret)(satp);
+
+  // Before the existing trampoline_userret call, replace with:
+  if(p->thread_id == 0) {
+      // Parent process uses default TRAPFRAME location
+      ((void (*)(uint64,uint64))trampoline_userret)(TRAPFRAME, satp);
+  } else {
+      // Child threads use offset trapframe locations
+      ((void (*)(uint64,uint64))trampoline_userret)(TRAPFRAME - PGSIZE * p->thread_id, satp);
+  }
 }
 
 // interrupts and exceptions from kernel code go here via kernelvec,

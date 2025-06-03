@@ -89,3 +89,44 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_clone(void)
+{
+    uint64 stack;
+    struct proc *np;
+    struct proc *p = myproc();
+    
+    // Get stack argument
+    argaddr(0, &stack);
+    
+    // Basic sanity check
+    if(stack == 0)
+        return -1;
+    
+    // Create new thread
+    if((np = allocproc_thread(p)) == 0){
+        return -1;
+    }
+    
+    // Set up the child's stack pointer
+    np->trapframe->sp = stack;
+    
+    // Map trapframe for the child thread
+    uint64 trapframe_va = TRAPFRAME - PGSIZE * np->thread_id;
+    if(mappages(np->pagetable, trapframe_va, PGSIZE,
+                (uint64)(np->trapframe), PTE_R | PTE_W) < 0) {
+        freeproc(np);
+        return -1;
+    }
+    
+    // Set child return value to 0
+    np->trapframe->a0 = 0;
+    
+    acquire(&np->lock);
+    np->state = RUNNABLE;
+    release(&np->lock);
+    
+    // Return child PID to parent
+    return np->pid;
+}

@@ -16,7 +16,7 @@ int nextpid = 1;
 struct spinlock pid_lock;
 
 extern void forkret(void);
-static void freeproc(struct proc *p);
+// static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
@@ -122,6 +122,7 @@ allocproc(void)
   return 0;
 
 found:
+  p->thread_id = 0;
   p->pid = allocpid();
   p->state = USED;
 
@@ -149,17 +150,69 @@ found:
   return p;
 }
 
+struct proc*
+allocproc_thread(struct proc *parent)
+{
+    struct proc *p;
+    
+    // Find unused proc slot
+    for(p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        if(p->state == UNUSED) {
+            goto found;
+        } else {
+            release(&p->lock);
+        }
+    }
+    return 0;
+
+found:
+    p->pid = allocpid();
+    p->state = USED;
+    
+    // Allocate trapframe for the thread
+    if((p->trapframe = (struct trapframe *)kalloc()) == 0){
+        freeproc(p);
+        release(&p->lock);
+        return 0;
+    }
+    
+    // Copy parent's trapframe
+    *(p->trapframe) = *(parent->trapframe);
+    
+    // Share the same page table (don't create new one)
+    p->pagetable = parent->pagetable;
+    
+    // Set up thread ID
+    static int next_thread_id = 1;
+    p->thread_id = next_thread_id++;
+    
+    // Copy other necessary fields from parent
+    p->parent = parent;
+    safestrcpy(p->name, parent->name, sizeof(parent->name));
+    
+    // Copy file descriptors if needed (or skip based on assumptions)
+    
+    release(&p->lock);
+    return p;
+}
+
+
 // free a proc structure and the data hanging from it,
 // including user pages.
 // p->lock must be held.
-static void
+void
 freeproc(struct proc *p)
 {
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
-  if(p->pagetable)
-    proc_freepagetable(p->pagetable, p->sz);
+  if(p->pagetable && p->thread_id == 0)
+      proc_freepagetable(p->pagetable, p->sz);
+  if(p->thread_id > 0 && p->pagetable) {
+      uint64 trapframe_va = TRAPFRAME - PGSIZE * p->thread_id;
+      uvmunmap(p->pagetable, trapframe_va, 1, 0);
+  }
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -169,6 +222,7 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->thread_id = 0;
 }
 
 // Create a user page table for a given process, with no user memory,
