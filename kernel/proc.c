@@ -182,16 +182,36 @@ found:
     
     // Share the same page table (don't create new one)
     p->pagetable = parent->pagetable;
+    p->sz = parent->sz;
     
-    // Set up thread ID
+    // Set up thread ID (make it thread-safe)
     static int next_thread_id = 1;
+    static struct spinlock thread_id_lock;
+    static int lock_initialized = 0;
+    
+    if (!lock_initialized) {
+        initlock(&thread_id_lock, "thread_id");
+        lock_initialized = 1;
+    }
+    
+    acquire(&thread_id_lock);
     p->thread_id = next_thread_id++;
+    release(&thread_id_lock);
     
     // Copy other necessary fields from parent
     p->parent = parent;
     safestrcpy(p->name, parent->name, sizeof(parent->name));
     
-    // Copy file descriptors if needed (or skip based on assumptions)
+    // Initialize file descriptors to NULL - they'll be set up in sys_clone
+    for(int i = 0; i < NOFILE; i++) {
+        p->ofile[i] = 0;
+    }
+    p->cwd = 0;
+    
+    // Set up new context to start executing at forkret
+    memset(&p->context, 0, sizeof(p->context));
+    p->context.ra = (uint64)forkret;
+    p->context.sp = p->kstack + PGSIZE;
     
     release(&p->lock);
     return p;

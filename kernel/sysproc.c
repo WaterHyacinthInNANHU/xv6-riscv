@@ -112,17 +112,27 @@ sys_clone(void)
     // Set up the child's stack pointer
     np->trapframe->sp = stack;
     
-    // Map trapframe for the child thread
+    // Map trapframe for the child thread at the offset location
     uint64 trapframe_va = TRAPFRAME - PGSIZE * np->thread_id;
     if(mappages(np->pagetable, trapframe_va, PGSIZE,
                 (uint64)(np->trapframe), PTE_R | PTE_W) < 0) {
+        // Clean up on failure
+        acquire(&np->lock);
         freeproc(np);
+        release(&np->lock);
         return -1;
     }
     
     // Set child return value to 0
     np->trapframe->a0 = 0;
     
+    // Copy parent's file descriptors
+    for(int i = 0; i < NOFILE; i++) {
+        if(p->ofile[i])
+            np->ofile[i] = filedup(p->ofile[i]);
+    }
+    np->cwd = idup(p->cwd);
+
     acquire(&np->lock);
     np->state = RUNNABLE;
     release(&np->lock);
